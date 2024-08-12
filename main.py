@@ -24,12 +24,18 @@ def main():
 
     camera = Camera()
     SM.setMainCamera(camera)
-    floor = MeshPlane((0, -1, 0), 20, 20)
-    wall = MeshPlane((0, 0, 10), 10, 10, plane=Physics.PLANE_XY)
+    floor = Plane((0, -2, 10), 20, 20, plane=Physics.PLANE_XZ)
+    r1 = Rigidbody.Rigidbody(floor)
+    r1.mass=math.inf
+    Rigidbody.addRigidbody(r1)
+    floor.setRigidbody(r1)
+    cube3 = Cube(position=(0.1, -5, 10.1), sideLength=1)
+    r2 = Rigidbody.Rigidbody(cube3)
+    Rigidbody.addRigidbody(r2)
+    cube3.setRigidbody(r2)
     cube = Cube(position=(0, 0, 10), sideLength=1)
-    cube2 = Cube(position=(.1, .1, 10.9), sideLength=1)
-    objectList = [cube, cube2]
-##    objectList = [wall]    
+    cube2 = Cube(position=(0, 2, 10), sideLength=1)
+    objectList = [cube, cube2, floor]
     controls = Controls.ControlManager(camera)
     rig = Rigidbody.Rigidbody(cube)
     Rigidbody.addRigidbody(rig)
@@ -46,11 +52,11 @@ def main():
     pygame.event.set_grab(True)
     deltaTime = Clock.tick(FPS) / 1000
 
-    cube2.rigidbody.velocity = Vector3(-.3, 0, 0)
+    
+    cube.rigidbody.acceleration = Vector3(0, -2, 0)
+    cube2.rigidbody.acceleration = Vector3(0, -2, 0)
 
     while True:
-##        input("waiting...")
-        
         pygame.display.update()
         deltaTime = Clock.tick(FPS) / 1000
         
@@ -115,34 +121,14 @@ def main():
             continue
 
         #update physics
-##        cube.rotateWorld([-20,-20,-20])
-##        cube.rotateWorld([0,0,-1])
-##        cube.rotateWorld([0,1,0])
-        
-##        print("******=====***")
-##        print(deltaTime)
-        #cube2.move(deltaTime*Vector3(-.3, 0, 0))
         if cube2.rigidbody.position[0] > 2.1:
-##            print("--cube2----")
-##            print(cube2.position)
-##            print(cube2.rigidbody.position)
             cube2.rigidbody.velocity = Vector3(-1, 0, 0)
         if cube.rigidbody.position[0] < -1.1:
-##            print("--cube----")
-##            print(cube.position)
-##            print(cube.rigidbody.position)
             cube.rigidbody.velocity = Vector3(1, 0, 0)
-##        print(cube2.position)
         collisions = Rigidbody.checkAllCollisions()
-##        Rigidbody.hits()
-##        Rigidbody.checkAllCollisions()
         if collisions != None:
             Rigidbody.enactCollisions(collisions)
         PhysicsManager.update(deltaTime)
-
-
-        
-        
 
 
 if __name__ == "__main__":

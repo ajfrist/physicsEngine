@@ -25,7 +25,8 @@ def applyActiveForces():
 def update(deltaTime):
     for body in bodies:
         body.velocity += body.acceleration * deltaTime
-        body.parent.move(body.velocity * deltaTime)
+        body.parent.move(body.velocity * deltaTime * (1-body.airResistance))
+        body.parent.rotateWorld(body.rotationVelocity * deltaTime * (1-body.airResistance))
 
 def addRigidbody(body):
     bodies.append(body)

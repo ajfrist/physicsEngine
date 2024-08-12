@@ -116,27 +116,45 @@ class MeshObject(Object):
         if (fileName != None):
             self.obj = pywavefront.Wavefront(fileName, collect_faces=True)
             #list of each vertex's position in world space
-            self.vertices = obj.vertices
+            self.vertices = self.obj.vertices
             self.vertRotations = []
             for vert in self.vertices:
-                angleX = 180/math.pi*math.asin(vert[0]/math.sqrt(vert[0]**2+vert[2]**2))
-                angleY = 180/math.pi*math.asin(vert[1]/math.sqrt(vert[0]**2+vert[1]**2+vert[2]**2))
+                angleX=0
+                angleY=0
+                if math.sqrt(vert[0]**2+vert[2]**2) != 0:
+                    angleX = 180/math.pi*math.asin(vert[0]/math.sqrt(vert[0]**2+vert[2]**2))
+                if math.sqrt(vert[0]**2+vert[1]**2+vert[2]**2) != 0:
+                    angleY = 180/math.pi*math.asin(vert[1]/math.sqrt(vert[0]**2+vert[1]**2+vert[2]**2))
                 angleZ = 0
                 if vert[2] >= 0:
                     self.vertRotations.append([angleX,angleY,angleZ])
                 else:
-                    self.vertRotations.append([(angleX/abs(angleX))*180-angleX,angleY,angleZ])
-            self.meshes = [mesh for name, mesh in obj.meshes.items()]
+                    self.vertRotations.append([sign(angleX)*180-angleX,angleY,angleZ])
+            self.meshes = [mesh for name, mesh in self.obj.meshes.items()]
             #list of each face's coresponding vertex indeces
-            self.faceVertexIndices = [face for face in mesh.faces for mesh in meshes]
+            self.faceVertexIndices = [face for mesh in self.meshes for face in mesh.faces]
 
     def move(self, vector3):
+        if vector3 == [0, 0, 0]:
+            return
         super().move(vector3)
+        # print(vector3)
         if self.rigidbody != None:
+            for face in self.rigidbody.faces:
+                # print(face)
+                for point in face:
+                    point[0] += vector3[0]
+                    point[1] += vector3[1]
+                    point[2] += vector3[2]
+                        
+                # print(face)
             for face in self.rigidbody.boundaryEquations:
                 for line in face:
+                    # print(line.endpoints)
                     line.endpoints[0] += vector3
                     line.endpoints[1] += vector3
+                    # print(line.endpoints)
+            # input()
 
 
 # local rotate:
@@ -269,11 +287,11 @@ class MeshObject(Object):
     def triangulate(self, listFaceVertexIndices):
         trangulatedFaceVertexIndices = []
         for face in listFaceVertexIndices:
-            if size(face) > 4:
+            if len(face) > 4:
                 return listFaceVertexIndices
-            elif size(face) > 3:
-                trangulatedFaceVertexIndices.append((face[0], face[1], face[2]))
-                trangulatedFaceVertexIndices.append((face[3], face[0], face[2]))
+            elif len(face) > 3:
+                trangulatedFaceVertexIndices.append([face[0], face[1], face[2]])
+                trangulatedFaceVertexIndices.append([Vector3(face[3]), Vector3(face[0]), Vector3(face[2])])
             else:
                 trangulatedFaceVertexIndices.append(face)
         return trangulatedFaceVertexIndices
@@ -288,18 +306,6 @@ class MeshObject(Object):
     #    (0, 1, 3)]  <- face 4
     def getFaceVertexIndices(self):
         return self.faceVertexIndices
-
-    #returns list of each face's corresponding vertex positions in world space
-    #  if faceIndex is not None, returns only the points for the face requested
-    #example:
-    #
-    #   [[(0, 0, 0), (1, 1, 1), (2, 2, 2)],  <- face 1
-    #    [(0, 0, 0), (2, 2, 2), (3, 3, 3)],  <- face 2
-    #    [(1, 1, 1), (2, 2, 2), (3, 3, 3)],  <- face 3
-    #    [(0, 0, 0), (1, 1, 1), (3, 3, 3)]]  <- face 4
-##    def getFacePoints(self):
-##        return [for face in self.]
-
 
     def getFaceCount(self):
         return len(self.faceVertexIndices)
@@ -346,7 +352,7 @@ class Plane(MeshObject):
         if plane == Physics.PLANE_YZ:
             self.vertices = [(0, -length/2, -width/2), (0, -length/2, width/2), (0, length/2, -width/2), (0, length/2, width/2)]
 
-        self.faceVertexIndices = [(0, 1, 2, 3)]
+        self.faceVertexIndices = [(0, 1, 3, 2)]
 
 class MeshPlane(MeshObject):
     def __init__(self, position, length, width, plane=Physics.PLANE_XZ, meshFrequency=1, borderColor=GREY, fillColor=GREY):

@@ -68,12 +68,23 @@ class Equation:
     GREATER_THAN = 4
     
     def __init__(self, comparator=EQUAL, coefficient=1, intercept=0, endpoints=[(0,0,0),(1,1,1)], plane=PLANE_XY, parent=None):
-        self.comparator = comparator
         self.coefficient = coefficient
         self.intercept = intercept
         self.endpoints = endpoints
         self.plane = plane
         self.parent = parent
+        self.midpoint = [(endpoints[0][0]+endpoints[1][0])/2,(endpoints[0][1]+endpoints[1][1])/2,(endpoints[0][2]+endpoints[1][2])/2]
+        self.maxDistance = math.sqrt((self.midpoint[0]-endpoints[0][0])**2+(self.midpoint[1]-endpoints[0][1])**2+(self.midpoint[2]-endpoints[0][2])**2)
+
+    def __str__(self):
+        return f"Equation({self.coefficient}x + {self.intercept}, {{{self.endpoints}}})"
+
+    def __eq__(self, other):
+        if not isinstance(other, Equation):
+            return False
+        return self.coefficient == other.coefficient and self.intercept == other.intercept and \
+                (self.endpoints[0] == other.endpoints[0] or self.endpoints[0] == other.endpoints[1]) and \
+                (self.endpoints[1] == other.endpoints[0] or self.endpoints[1] == other.endpoints[1])
 
     def evaluate(self, x=None, y=None):
         if x != None and y != None:

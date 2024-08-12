@@ -43,17 +43,11 @@ class Vector3:
             self.z = value
             self.magnitude = math.sqrt(self.x**2 + self.y**2 + self.z**2)
 
-    def normalizeSelf(self):
-        self.x /= self.magnitude
-        self.y /= self.magnitude
-        self.z /= self.magnitude
-        self.magnitude = 1
-
-    def setMag(self, mag):
-        self.x *= mag
-        self.y *= mag
-        self.z *= mag
-        self.magnitude = mag
+    def __eq__(self, other):
+        if not isinstance(other, Vector3):
+            return False
+        if self.x == other.x and self.y == other.y and self.z == other.z:
+            return True
 
     def __add__(self, other):
         if isinstance(other, Vector3):
@@ -88,6 +82,10 @@ class Vector3:
     def __sub__(self, other):
         if isinstance(other, Vector3):
             return Vector3(self.x - other.x, self.y - other.y, self.z - other.z)
+        elif (isinstance(other, tuple) or isinstance(other, list)) and len(other) == 3:
+            return Vector3(self.x - other[0], self.y - other[1], self.z - other[2])
+        elif isinstance(other, float) or isinstance(other, int):
+            return Vector3(self.x - other, self.y - other, self.z - other)
         else:
             raise TypeError("Unsupported operand type. Can only subtract Vector3 objects.")
 
@@ -135,6 +133,18 @@ class Vector3:
             return self.y
         elif self.current == 2:
             return self.z
+
+    def normalizeSelf(self):
+        self.x /= self.magnitude
+        self.y /= self.magnitude
+        self.z /= self.magnitude
+        self.magnitude = 1
+
+    def setMag(self, mag):
+        self.x *= mag
+        self.y *= mag
+        self.z *= mag
+        self.magnitude = mag
 
     def getMag(self):
         return self.magnitude

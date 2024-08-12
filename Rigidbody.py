@@ -4,6 +4,7 @@ from Vector import Vector3
 from Physics import Equation
 import Physics
 import PhysicsManager
+from ScreenManager import sign
 
 import math
 
@@ -22,45 +23,79 @@ def addRigidbody(body):
 
 #called by main thread - calculate and carry out appropriate response forces as a result of collisions
 def enactCollisions(collisions):
-    # print("kkkkkkkkkkkkk")
     for c in collisions:
-        # input(c.collisionPoints)
         #obtain average collision point
         point = Vector3(0, 0, 0)
         for p in c.collisionPoints:
-            # print(p)
             point += Vector3(p)
         point = point / len(c.collisionPoints)
-        # print(f"  {point}")
+        normalVect1 = -(point - c.body1.position)
+        
+        normalVect2 = -(point - c.body2.position)
+        normalVect1.normalizeSelf()
+        normalVect2.normalizeSelf()
+        
+        rotatedPoint = Vector3(c.body2.position)
+        #rotate all into perspective of other body's velocity vector
+        horzDistance = math.sqrt(c.body2.velocity[2]**2+c.body2.velocity[0]**2)
+        vertDistance = math.sqrt(c.body2.velocity[2]**2+c.body2.velocity[1]**2)
+        if horzDistance == 0:
+            horzAngle = 0
+            if c.body2.velocity[1] < 0:
+                vertAngle = -math.pi/2
+            if c.body2.velocity[1] > 0:
+                vertAngle = math.pi/2
+            else:
+                vertAngle = 0
+        else:
+            horzAngle = math.asin(c.body2.velocity[2]/horzDistance)
+            vertAngle = math.asin(c.body2.velocity[1]/vertDistance)
+
+        horzDistance = math.sqrt(rotatedPoint[2]**2+rotatedPoint[0]**2)
+        currentAngle = math.asin(rotatedPoint[0]/horzDistance)
+        if rotatedPoint[2] < 0:
+            currentAngle = sign(currentAngle) * math.pi - currentAngle
+        rotatedPoint[0] = horzDistance * math.sin(currentAngle-horzAngle)
+        rotatedPoint[2] = horzDistance * math.cos(currentAngle-horzAngle)
+        vertDistance = math.sqrt(rotatedPoint[2]**2+rotatedPoint[1]**2)
+        currentAngle = math.asin(rotatedPoint[1]/vertDistance)
+        if rotatedPoint[2] < 0:
+            currentAngle = sign(currentAngle) * math.pi - currentAngle
+        horzDistance = math.sqrt(rotatedPoint[2]**2+rotatedPoint[0]**2)
+        rotatedPoint[1] = horzDistance * math.sin(currentAngle-vertAngle)
+        rotatedPoint[2] = horzDistance * math.cos(currentAngle-vertAngle)
+        angleFromVelocity = math.asin(math.sqrt(rotatedPoint[0]**2+rotatedPoint[1]**2)/math.sqrt(rotatedPoint[0]**2+rotatedPoint[1]**2+rotatedPoint[2]**2))
+        if rotatedPoint[2] < 0:
+            angleFromVelocity = sign(angleFromVelocity) * math.pi - angleFromVelocity
+
+
+        #get rotation vector
+        rotationVector = [0,0,0]
+        rotationVector[1] = math.sin(angleFromVelocity) * (rotatedPoint[0]/(math.sqrt(rotatedPoint[0]**2+rotatedPoint[1]**2)))
+        rotationVector[0] = math.sin(angleFromVelocity) * (rotatedPoint[1]/(math.sqrt(rotatedPoint[0]**2+rotatedPoint[1]**2)))
+        rotationVector[2] = math.sin(angleFromVelocity) * (rotatedPoint[1]/(math.sqrt(rotatedPoint[1]**2+rotatedPoint[2]**2)))
+        
+        dist = math.sqrt(rotatedPoint[0]**2+rotatedPoint[1]**2+rotatedPoint[2]**2)
 
         #if body is movable, determine normal force vector and apply perfect elastic velocity change
         if c.body1.mass != math.inf and c.body2.mass != math.inf:
-            normalAngle1 = -(point - c.body1.position)
-            normalAngle2 = -(point - c.body2.position)
-            normalAngle1.normalizeSelf()
-            normalAngle2.normalizeSelf()
-            print(normalAngle1)
-            # print(normalAngle2)
-            # print("**")
             # TODO - potential for rapid/incorrect acceleration on collisions (non-perfect elastic ones?)
                 # due to repeat collision calls - solution: move object along normal vect some dist to remove collision before next call
             for i in range(3):
                 vel1 = c.body1.velocity[i]
                 vel2 = c.body2.velocity[i]
                 vf1 = (c.body1.mass*vel1+c.body2.mass*vel2-c.body2.mass*(vel1-vel2))/(c.body1.mass+c.body2.mass)
-                # vf1 = (c.body1.mass*vel1+c.body2.mass*vel2-c.body2.mass*(vel2-vel1))/(c.body1.mass+c.body2.mass)
                 vf2 = vel1-vel2+vf1
-                # print(c.body1.velocity[i],c.body2.velocity[i])
-                # print(vf1, vf2)
-                c.body1.velocity[i] = vf1 #* abs(normalAngle1[i])
-                c.body2.velocity[i] = vf2 #* abs(normalAngle2[i])
-                # print(c.body1.velocity[i],c.body2.velocity[i])
-            # print(c.bod y2.velocity)
+                c.body1.velocity[i] += (vf1-vel1) * math.cos(angleFromVelocity) * normalVect1[i] * c.body1.elasticity
+                c.body1.rotationVelocity[i] = rotationVector[i] *100 * c.body1.elasticity
 
+                c.body2.velocity[i] += (vf2-vel2) * math.cos(angleFromVelocity) * normalVect1[i] * c.body1.elasticity
+                c.body2.rotationVelocity[i] = rotationVector[i] *100 * c.body1.elasticity
 
-
-
-
+        elif c.body1.mass == math.inf:
+            c.body2.velocity  = -c.body2.velocity * c.body1.elasticity
+        elif c.body2.mass == math.inf:
+            c.body1.velocity = -c.body1.velocity * c.body1.elasticity
 
 
 #called by main physics thread to check for rigidbody collisions on all objects
@@ -68,19 +103,15 @@ def enactCollisions(collisions):
 def checkAllCollisions():
     if len(allBodies) < 2:
         return None
-    # print("1")
     collisions = []
     for i in range(len(allBodies)):
         for j in range(i+1, len(allBodies)):
             dist = math.sqrt(abs(allBodies[i].position[0]-allBodies[j].position[0])**2 + \
                 abs(allBodies[i].position[1]-allBodies[j].position[1])**2 + \
                 abs(allBodies[i].position[2]-allBodies[j].position[2])**2)
-            # print("2")
             #bodies are far enough apart that they can't be touching
-            # print(dist)
             if dist > allBodies[i].maxDistanceFromCenter + allBodies[j].maxDistanceFromCenter:
-                return None
-            # print("3")
+                continue
 
 
             #deprecated - unlikely to implement, even the correct version
@@ -89,198 +120,227 @@ def checkAllCollisions():
             # #bodies are closer enough that they have to be touching
             # if dist < allBodies[i].minDistanceFromCenter + allBodies[j].minDistanceFromCenter:
             #     return True
-            # print("4")
+
             #check standard collision
             collisionPoints = checkCollision(allBodies[i], allBodies[j])
-            # print("5")
             if collisionPoints != None:
-                # print("_5")
-                # print(collisionPoints)
                 coll = Collision(allBodies[i],allBodies[j],collisionPoints)
                 collisions.append(coll)
-    # print("6")
     if len(collisions) > 0:
         return collisions
     return None
 
-#check collisions between two rigidbodies
-#returns list of any collisions detected, otherwise None
+
+
 def checkCollision(body1, body2):
-    # print("rann")
-    #TODO - benchmark this vs implementing FACE object with face.(min/max)DistFromCenter 
-        #     and auto not calculate collision if face is too far away from other face
-    trueHits = []
-    hitPoints= [[],[]]
-    for a,faceBounds in enumerate(body1.boundaryEquations):
-        for b,line in enumerate(faceBounds):
-            for c,b2face in enumerate(body2.boundaryEquations):
-                #if on cube1's right face and cube2's left side
-                # if a==2 and c == 0:
-                #     print("*")
-                #     print(line.endpoints)
-                print(f"{a}, {b}, {c}")
-                val = [a,b,c,0]
-                results, indices = isLineInBoundary(line, b2face, Physics.PLANE_XY,val)
-                # print("v1: "+str(segment is not None))
-                if results == None:
+    count = 0
+    hits = []
+    for lineX in body1.uniqueLines:
+        for face in body2.faces:
+            if face.maxDistance + lineX.maxDistance +1 <= math.sqrt((face.averagePoint[0]-lineX.midpoint[0])**2+\
+                                                                (face.averagePoint[1]-lineX.midpoint[1])**2+\
+                                                                (face.averagePoint[2]-lineX.midpoint[2])**2):
+                continue
+
+            line = Physics.generateEquation(Vector3(lineX.endpoints[0]), Vector3(lineX.endpoints[1]), Physics.PLANE_XY)
+            count +=1
+            points = [Vector3(face.points[0]),Vector3(face.points[1]),Vector3(face.points[2])]
+
+            offset = [points[0][0], points[0][1], points[0][2]]
+            rightAnchor = 0
+            for i, p in enumerate(points):
+                if p[0] < offset[0]:
+                    offset[0] = p[0]
+                    offset[1] = p[1]
+                    offset[2] = p[2]
+            
+            newLineEndpoints = [Vector3(line.endpoints[0])-offset, Vector3(line.endpoints[1])-offset]
+
+            #do rotations on each axis to make boundary face flat
+            origHorzAngle, origTiltAngle, origVertAngle = [None]*3
+            horzTurn, tiltTurn, vertTurn = [None]*3
+            for i, point in enumerate(points):
+                point = [point[0]-offset[0], point[1]-offset[1], point[2]-offset[2]]
+                
+                #dont do rotations if current point is offset point
+                if abs(point[0]) < 0.00001 and abs(point[1]) < 0.00001 and abs(point[2]) < 0.00001:
+                    points[i] = [point[0]+offset[0], point[1]+offset[1], point[2]+offset[2]]
                     continue
-                for result, b2Index in zip(results, indices):
-                    #single point intersect on XY plane
-                    if result != None and isinstance(result, tuple):
-                        print("point1")
-                        print(f"   {a}, {b}, {c}, {b2Index}")
-                        l1 = Physics.generateEquation(line.endpoints[0], line.endpoints[1], Physics.PLANE_XZ)
-                        # print("-")
-                        l2 = Physics.generateEquation(b2face[b2Index].endpoints[0], b2face[b2Index].endpoints[1], Physics.PLANE_XZ)
-                        # print("-")
-                        z1 = l1.evaluate(result[0])
-                        # print("-")
-                        z2 = l2.evaluate(result[0])
-                        # print("-")
-                        # print(l1.endpoints)
-                        # print(l1.coefficient)
-                        # print(l1.intercept)
-                        # print(l2.endpoints)
-                        # print(l2.coefficient)
-                        # print(l2.intercept)
-                        # print(z1)
-                        # print(z2)
-                        # print(abs(z1-z2))
-                        # print(abs(z1-z2)>0.00001)
-                        # print("<")
-                        #single point intersect on XZ plane
-                        if abs(z1 - z2) <= 0.00001:
-                            print("point2")
-                            print(str((result[0],result[1],z1)))
-                            trueHits.append((a,b,c,b2Index))
-                            hitPoints[0].append((result[0],result[1],z1))
-                            hitPoints[1].append((a,b,c,b2Index))
-                            #return True
 
-                    elif result != None and isinstance(result, list) and isinstance(result[1], bool):
-                        result[0] = Physics.generateEquation(result[0].endpoints[0], result[0].endpoints[1], Physics.PLANE_XZ)
-                        results2, indices2 = isLineInBoundary(result[0], b2face, Physics.PLANE_XZ,val)
-                        if results2 == None:
-                            continue
-                        for result2, b2Index2 in zip(results2, indices2):
-                            if result2 != None and isinstance(result2, list) and isinstance(result2[1], bool):
-                                result2[0] = Physics.generateEquation(result2[0].endpoints[0], result2[0].endpoints[1], Physics.PLANE_YZ)
-                                results3, indices3 = isLineInBoundary(result2[0], b2face, Physics.PLANE_YZ, val)
-                                if results3 == None:
-                                    continue
-                                for result3, b2Index3 in zip(results3, indices3):
-                                    if result3 != None and isinstance(result3, list) and isinstance(result3[1], bool):
-                                        hitPoints[0].append(result3[0])
-                                        hitPoints[1].append("OPEN COLLISION")
-                                
+                horzDistance = math.sqrt(point[0]**2 + point[2]**2)
+                if horzDistance > 0.00001:
+                    currentAngle = math.asin(point[0]/horzDistance)
+                    if point[2] < 0:
+                        currentAngle = math.pi - currentAngle
+                    if origHorzAngle == None:
+                        rightAnchor = i
+                        origHorzAngle = math.asin(point[0]/horzDistance)
+                        if point[2] < 0:
+                            origHorzAngle = math.pi - origHorzAngle
+                        horzTurn = math.pi/2 - origHorzAngle
+                    point[0] = horzDistance * math.sin(horzTurn+currentAngle)
+                    point[2] = horzDistance * math.cos(horzTurn+currentAngle) 
+                tiltDistance = math.sqrt(point[0]**2+point[1]**2)
+                if tiltDistance > 0.00001:
+                    currentAngle = math.asin(point[1]/tiltDistance)
+                    if point[0] < 0:
+                        currentAngle = sign(currentAngle)*math.pi - currentAngle
+                    if origTiltAngle == None:
+                        origTiltAngle = math.asin(point[1]/tiltDistance)
+                        if point[0] < 0:
+                            origTiltAngle = sign(origTiltAngle)*math.pi - origTiltAngle
+                        tiltTurn = -origTiltAngle
+                    point[1] = tiltDistance * math.sin(tiltTurn+currentAngle)
+                    point[0] = tiltDistance * math.cos(tiltTurn+currentAngle) 
+                vertDistance = math.sqrt(point[1]**2+point[2]**2)
+                if vertDistance > 0.00001:
+                    currentAngle = math.asin(point[1]/vertDistance)
+                    if point[2] < 0:
+                        currentAngle = sign(currentAngle)*math.pi - currentAngle
+                    if origVertAngle == None:
+                        origVertAngle = math.asin(point[1]/vertDistance)
+                        if point[2] < 0:
+                            origVertAngle = sign(origVertAngle)*math.pi - origVertAngle
+                        vertTurn = -origVertAngle
+                    point[1] = vertDistance * math.sin(vertTurn+currentAngle)
+                    point[2] = vertDistance * math.cos(vertTurn+currentAngle) 
+                    
+                points[i] = [point[0]+offset[0], point[1]+offset[1], point[2]+offset[2]]
+            
+            #adjust both endpoints of line according to previous rotations
+            
+            #endpoint1 y-axis
+            horzDistance = math.sqrt(newLineEndpoints[0][0]**2+newLineEndpoints[0][2]**2)
+            if horzDistance > 0.00001:
+                currentAngle = math.asin(newLineEndpoints[0][0]/horzDistance)
+                if newLineEndpoints[0][2] < 0:
+                    currentAngle = sign(currentAngle) * math.pi - currentAngle
+                newLineEndpoints[0][0] = horzDistance * math.sin(horzTurn+currentAngle) 
+                newLineEndpoints[0][2] = horzDistance * math.cos(horzTurn+currentAngle) 
+            #endpoint2 y-axis
+            horzDistance = math.sqrt(newLineEndpoints[1][0]**2+newLineEndpoints[1][2]**2)
+            if horzDistance > 0.00001:
+                currentAngle = math.asin(newLineEndpoints[1][0]/horzDistance)
+                if newLineEndpoints[1][2] < 0:
+                    currentAngle = sign(currentAngle) * math.pi - currentAngle
+                newLineEndpoints[1][0] = horzDistance * math.sin(horzTurn+currentAngle) 
+                newLineEndpoints[1][2] = horzDistance * math.cos(horzTurn+currentAngle) 
 
-                    #multipoint/segment intersection on XY plane
-                    # elif result != None and isinstance(result, Physics.Equation):
-                    elif result != None and isinstance(result, list):
-                        print(b2Index)
-                        print("seg1")
-                        print(f"   {a}, {b}, {c}, {b2Index}")
-                        print(result[0].endpoints)
-                        end1 = result[0].endpoints[0]
-                        end2 = result[0].endpoints[1]
-                        # print(end1,end2)
-                        if result[0].plane != Physics.PLANE_XZ:
-                            result[0] = Physics.generateEquation(end1, end2, Physics.PLANE_XZ)
-                        results2, indices2 = isLineInBoundary(result[0], [result[1]], Physics.PLANE_XZ,val)
-                        # print("v2: "+str(segment2 is not None))
-                        # intersection on XZ plane
-                        if results2 == None:
-                            continue
-                        # print(results2)
-                        for segment2, b2Index2 in zip(results2, indices2):
-                            # print(segment.endpoints)
-                            # print(segment.coefficient)
-                            # print(segment.intercept)
-                            # print(segment2.endpoints)
-                            # print(segment2.coefficient)
-                            # print(segment2.intercept)                        
-                            # print(segment2 != None)
-                            # print("<")
-                            # if segment2 != None and b2Index == b2Index2:
-                            if segment2 != None:
-                                print(b2Index2)
-                                print("seg2")
-                                # print("alkLKJDFHLSDKJFHLSKJFHLKJSDHFLK")
-                                trueHits.append((a,b,c,b2Index2))
-                                if isinstance(segment2, tuple):
-                                    #TODO - y value here is just not correct, not accounting for anything other than vertical line;
-                                       #must calculate actual y value at intersection
-                                    hitPoints[0].append((segment2[0],segment.endpoints[0][1],segment2[1]))
-                                    print(str((segment2[0],segment.endpoints[0][1],segment2[1])))
-                                else:
-                                    if abs(segment2[0].endpoints[0][0]-segment2[0].endpoints[1][0]) <= 0.00001 and \
-                                            abs(segment2[0].endpoints[0][1]-segment2[0].endpoints[1][1]) <= 0.00001 and \
-                                            abs(segment2[0].endpoints[0][2]-segment2[0].endpoints[1][2]) <= 0.00001:
-                                        # hitPoints[0].append(segment2.endpoints[0])
-                                        hitPoints[0].append((segment2[0].endpoints[0][0],segment2[0].endpoints[0][1],segment2[0].endpoints[0][2]))
-                                        print(segment2[0].endpoints)
-                                    else:
-                                        # hitPoints[0].append(segment2)
-                                        hitPoints[0].append((segment2[0].endpoints[0][0],segment2[0].endpoints[0][1],segment2[0].endpoints[0][2]))
-                                        hitPoints[0].append((segment2[0].endpoints[1][0],segment2[0].endpoints[1][1],segment2[0].endpoints[1][2]))
-                                        hitPoints[1].append((a,b,c,b2Index2))
-                                        print(segment2[0].endpoints)
+            #endpoint1 z-axis
+            tiltDistance = math.sqrt(newLineEndpoints[0][0]**2+newLineEndpoints[0][1]**2)
+            if tiltDistance > 0.00001:
+                currentAngle = math.asin(newLineEndpoints[0][1]/tiltDistance)
+                if newLineEndpoints[0][0] < 0:
+                    currentAngle = sign(currentAngle) * math.pi - currentAngle
+                newLineEndpoints[0][1] = tiltDistance * math.sin(tiltTurn+currentAngle) 
+                newLineEndpoints[0][0] = tiltDistance * math.cos(tiltTurn+currentAngle) 
+            #endpoint2 z-axis
+            tiltDistance = math.sqrt(newLineEndpoints[1][0]**2+newLineEndpoints[1][1]**2)
+            if tiltDistance > 0.00001:
+                currentAngle = math.asin(newLineEndpoints[1][1]/tiltDistance)
+                if newLineEndpoints[1][0] < 0:
+                    currentAngle = sign(currentAngle) * math.pi - currentAngle
+                newLineEndpoints[1][1] = tiltDistance * math.sin(tiltTurn+currentAngle) 
+                newLineEndpoints[1][0] = tiltDistance * math.cos(tiltTurn+currentAngle) 
 
-                                hitPoints[1].append((a,b,c,b2Index2))
-                                #return True
-    print("HIT POINTS:")
-    for i in range(len(hitPoints[0])):
-        if not hitPoints[0][i] in hitPoints[0][0:i]:
-            print(hitPoints[0][i],end="    ,   ")
-            print(hitPoints[1][i])
-            if isinstance(hitPoints[0][i], Physics.Equation):
+            #endpoint1 x-axis
+            vertDistance = math.sqrt(newLineEndpoints[0][1]**2+newLineEndpoints[0][2]**2)
+            if vertDistance > 0.00001:
+                currentAngle = math.asin(newLineEndpoints[0][1]/vertDistance)
+                if newLineEndpoints[0][2] < 0:
+                    currentAngle = sign(currentAngle) * math.pi - currentAngle
+                newLineEndpoints[0][1] = vertDistance * math.sin(vertTurn+currentAngle) 
+                newLineEndpoints[0][2] = vertDistance * math.cos(vertTurn+currentAngle) 
+            #endpoint2 x-axis
+            vertDistance = math.sqrt(newLineEndpoints[1][1]**2+newLineEndpoints[1][2]**2)
+            if vertDistance > 0.00001:
+                currentAngle = math.asin(newLineEndpoints[1][1]/vertDistance)
+                if newLineEndpoints[1][2] < 0:
+                    currentAngle = sign(currentAngle) * math.pi - currentAngle
+                newLineEndpoints[1][1] = vertDistance * math.sin(vertTurn+currentAngle) 
+                newLineEndpoints[1][2] = vertDistance * math.cos(vertTurn+currentAngle) 
+                
+            newLineEndpoints[0]+=offset
+            newLineEndpoints[1]+=offset
+            line = Physics.generateEquation(newLineEndpoints[0],newLineEndpoints[1],Physics.PLANE_XY)
+            
+            #create horizontal line segment from outermost (x-axis) points
+            pointsOrdered = sortPointsByAxis(points, Physics.AXIS_X)
+            boundary = Physics.generateEquation(pointsOrdered[0], pointsOrdered[-1], Physics.PLANE_XY)
 
-                print("    ",end="")
-                print(hitPoints[0][i].endpoints)
-    print("<")
-    # print("TRUE HITS:")
-    # for x in trueHits:
-    #     print(x)
-    # print("<")
-    l=[]
+            #check if intersection between flat plane boundary face and line
+
+            #line is just point
+            if line.coefficient == None:
+                x = line.endpoints[0][0]
+                y = line.endpoints[0][1]
+            #line has vertical slope
+            elif line.coefficient == math.inf:
+                x = line.endpoints[0][0]
+                y = boundary.endpoints[0][1]
+            #line is horizontal (parallel)
+            elif abs(line.coefficient - boundary.coefficient) <= 0.00001:
+                x = line.endpoints[0][0]
+                y = boundary.endpoints[0][1]
+            #line is regular    
+            else:
+                x = (boundary.intercept - line.intercept) / \
+                 (line.coefficient - boundary.coefficient)
+                y = boundary.coefficient * x + boundary.intercept
+            #ensure intersection is within bounds                
+            if x <= pointsOrdered[-1][0] and x >= pointsOrdered[0][0] and \
+                    x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
+                    x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
+                    y <= max(line.endpoints[0][1], line.endpoints[1][1]) and \
+                    y >= min(line.endpoints[0][1], line.endpoints[1][1]):
+
+                #change the two boundaries with intersection into XZ plane
+                if x < pointsOrdered[1][0]:
+                    seg1 = Physics.generateEquation(pointsOrdered[0],pointsOrdered[1], Physics.PLANE_XZ)
+                else:
+                    seg1 = Physics.generateEquation(pointsOrdered[1],pointsOrdered[-1], Physics.PLANE_XZ)
+                seg2 = Physics.generateEquation(pointsOrdered[0],pointsOrdered[-1], Physics.PLANE_XZ)
+                z1 = seg1.evaluate(x=x)
+                z2 = seg2.evaluate(x=x)
+                if abs(z1) == math.inf:
+                    z1 = seg1.endpoints[0][2]
+                    z2 = seg1.endpoints[1][2]
+                elif abs(z2) == math.inf:
+                    z1 = seg2.endpoints[0][2]
+                    z2 = seg2.endpoints[1][2]
+                    
+                #create boundary in XZ plane connecting two points from cross-section of intersection
+                boundaryXZ = Physics.generateEquation((x,y,z1), \
+                                                    (x,y,z2), Physics.PLANE_XZ)
+
+                #change line into XZ plane
+                line = Physics.generateEquation(line.endpoints[0], line.endpoints[1], Physics.PLANE_XZ)
+
+                #check for intersection between new line and boundary in XZ plane
+                z = line.evaluate(x=x)
+                
+                #ensure intersection is within bounds
+                if z <= max(boundaryXZ.endpoints[0][2], boundaryXZ.endpoints[1][2]) and \
+                        z >= min(boundaryXZ.endpoints[0][2], boundaryXZ.endpoints[1][2]) and \
+                        x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
+                        x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
+                        z <= max(line.endpoints[0][2], line.endpoints[1][2]) and \
+                        z >= min(line.endpoints[0][2], line.endpoints[1][2]):
+                    hits.append((x, y, z))
     i=1
-    while (i < len(hitPoints[0])):
-        for p in hitPoints[0][0:i]:
-            if abs(hitPoints[0][i][0] - p[0]) <= 0.005 and \
-                abs(hitPoints[0][i][1] - p[1]) <= 0.005 and \
-                abs(hitPoints[0][i][2] - p[2]) <= 0.005:
-                del(hitPoints[0][i])
+    while (i < len(hits)):
+        for p in hits[0:i]:
+            if abs(hits[i][0] - p[0]) <= 0.00001 and \
+                abs(hits[i][1] - p[1]) <= 0.00001 and \
+                abs(hits[i][2] - p[2]) <= 0.00001:
+                del(hits[i])
                 i-=1
                 break
         i+=1
-
-    # i=0
-    # while (i <= len(hitPoints[0])):
-    #     # if hitPoints[0][i] in hitPoints[0][0:i]:
-    #     for p in hitPoints[0:i]:
-    #         if abs(hitPoints[0][i][0] - p[0]) <= 0.00001 and \
-    #                 abs(hitPoints[0][i][1] - p[1]) <= 0.00001 and \
-    #                 abs(hitPoints[0][i][2] - p[2]) <= 0.00001:
-    #             del(hitPoints[0][i])
-    #         else:
-    #             i+=1
-
-
-    #     if hitPoints[0][i][0]
-    #         del(hitPoints[0][i])
-    #     else:
-    #         i+=1
-    # i=0
-    # while (i < len(hitPoints[0])):
-    #     # if hitPoints[0][i] in hitPoints[0][0:i]:
-    #     if hitPoints[0][i][0]
-    #         del(hitPoints[0][i])
-    #     else:
-    #         i+=1
-    if len(trueHits) != 0:
-        return hitPoints[0]
+    if len(hits) != 0:
+        return hits
     return None
-        
+
 
 #generate equations defining the points bounding a face
 #(FVPs) faceVerticesPos - ex:
@@ -290,10 +350,9 @@ def generateFaceBoundaryEquations(FVPs, averagePoint, plane, parent=None):
     
     for i in range(len(FVPs)):
         if i+1 == len(FVPs):
-            eq = Physics.generateEquation(FVPs[i], FVPs[0], plane, parent)
+            eq = Physics.generateEquation(Vector3(FVPs[i]), Vector3(FVPs[0]), plane, parent)
         else:
-            eq = Physics.generateEquation(FVPs[i], FVPs[i+1], plane, parent)
-        # print(eq.endpoints)
+            eq = Physics.generateEquation(Vector3(FVPs[i]), Vector3(FVPs[i+1]), plane, parent)
 
         if eq.coefficient == None:
             sign = Equation.EQUAL
@@ -329,504 +388,6 @@ def generateFaceBoundaryEquations(FVPs, averagePoint, plane, parent=None):
         lis.append(eq)
     
     return lis
-
-
-#TODO - what if intersecting line never actually intersects a boundary, but is within region?
-#divide by zero protection
-
-#TODO - function returns first segment of intersection - missing out on other potential intersections in the same face
-
-#determines if a line interests with an area
-#returns Equation defining the first segment of intersection,
-#       or (x,y) tuple of the singular intersection point
-#       otherwise returns None
-#line - Equation
-#boundaries - list of Equation objects
-#plane - PLANE_XY
-def isLineInBoundary(line, boundaries, plane,val):
-    #input("halt")
-    results = []
-    indices = []
-    if plane == Physics.PLANE_XY:
-        for a,boundary in enumerate(boundaries):
-            val[3]=a
-            # print(boundary.endpoints)
-            # print(f"     ____{val}")
-            # print("XY")
-            # print(line.endpoints)
-            # print(boundary.endpoints)
-            #potentially one intersection - both lines are only points
-            if line.coefficient == None and boundary.coefficient == None:
-                # print("_1")
-                if abs(line.endpoints[0][0]-boundary.endpoints[0][0]) <= 0.00001 and \
-                        abs(line.endpoints[0][1]-boundary.endpoints[0][1]) <= 0.00001:
-                    print("_ _1")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (line.endpoints[0][0], line.endpoints[0][1]), a
-                    results.append((line.endpoints[0][0], line.endpoints[0][1]))
-                    indices.append(a)
-                    # print((val[0],val[1],val[2],val[3]))
-            #potentially one intersection - one line is a point, other is line
-            elif line.coefficient == None:
-                # print("_2")
-                x1 = line.endpoints[0][0]
-                y2 = boundary.evaluate(x=x1)
-                if abs(line.endpoints[0][1]-y2) <= 0.00001 and \
-                        x1 <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        x1 >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        y2 <= max(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                        y2 >= min(boundary.endpoints[0][1], boundary.endpoints[1][1]):
-                    print("_ _2")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # print((val[0],val[1],val[2],val[3]))
-                    # return (line.endpoints[0][0], line.endpoints[0][1]), a
-                    results.append((line.endpoints[0][0], line.endpoints[0][1]))
-                    indices.append(a)
-            #potentially one intersection - one line is line, other line is a point
-            elif boundary.coefficient == None:
-                # print("_3")
-                x1 = boundary.endpoints[0][0]
-                y2 = line.evaluate(x=x1)
-                if abs(boundary.endpoints[0][1]-y2) <= 0.00001 and \
-                        x1 <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        x1 >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        y2 <= max(line.endpoints[0][1], line.endpoints[1][1]) and \
-                        y2 >= min(line.endpoints[0][1], line.endpoints[1][1]):
-                    print("_ _3")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # print((val[0],val[1],val[2],val[3]))
-                    # return (boundary.endpoints[0][0], boundary.endpoints[0][1]), a
-                    results.append((boundary.endpoints[0][0], boundary.endpoints[0][1]))
-                    indices.append(a)
-            #lines parallel vertical, potential segment intersection
-            elif line.coefficient == math.inf and boundary.coefficient == math.inf: 
-                print("_ _41")
-                if abs(line.endpoints[0][0] - boundary.endpoints[0][0]) <= 0.00001:
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    lis = sortPointsByAxis([line.endpoints[0], line.endpoints[1], boundary.endpoints[0], boundary.endpoints[1]], Physics.AXIS_Y)
-                    # return Physics.generateEquation(lis[1], lis[2], plane), a
-
-                    # results.append(Physics.generateEquation(lis[1], lis[2], plane))
-
-                    #line & boundary equations in XZ plane
-                    l2 = Physics.generateEquation(line.endpoints[0],line.endpoints[1], Physics.PLANE_XZ)
-                    b2 = Physics.generateEquation(boundary.endpoints[0],boundary.endpoints[1], Physics.PLANE_XZ)
-
-                    #calculate innermost two points using the inner x bounds
-                    lineZ1 = l2.evaluate(x=lis[1][0])
-                    lineZ2 = b2.evaluate(x=lis[1][0])
-                    boundaryZ1 = l2.evaluate(x=lis[2][0])
-                    boundaryZ2 = b2.evaluate(x=lis[2][0])
-                    returnSeg1 = Physics.generateEquation((line.endpoints[0][0],lis[1][1],lineZ1), (line.endpoints[0][0],lis[2][1],lineZ2), Physics.PLANE_XZ)
-                    returnSeg2 = Physics.generateEquation((line.endpoints[0][0],lis[1][1],boundaryZ1), (line.endpoints[0][0],lis[2][1],boundaryZ2), Physics.PLANE_XZ)
-                    results.append([returnSeg1,returnSeg2])
-                    indices.append(a)
-                    # print((val[0],val[1],val[2],val[3]))
-            #one intersection - vertical line and regular line 
-            elif line.coefficient == math.inf:
-                # print("_ _42")
-                x = line.endpoints[0][0]
-                y = boundary.coefficient * x + boundary.intercept
-                if x <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        x >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        y <= max(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                        y >= min(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                        x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        y <= max(line.endpoints[0][1], line.endpoints[1][1]) and \
-                        y >= min(line.endpoints[0][1], line.endpoints[1][1]):
-                    print("_ _ _421")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (x, y), a
-                    results.append((x, y))
-                    indices.append(a)
-                    # print((val[0],val[1],val[2],val[3]))
-            #one intersection - regular line and vertical line
-            elif boundary.coefficient == math.inf:
-                # print("_ _43")
-                x = boundary.endpoints[0][0]
-                y = line.coefficient * x + line.intercept
-                # print(">")
-                # print(x)
-                # print(y)
-                # print(line.coefficient)
-                # print(line.intercept)
-                # print(line.endpoints)
-                # print(boundary.endpoints)
-                # print(x <= max(line.endpoints[0][0], line.endpoints[1][0]))
-                # print(x >= min(line.endpoints[0][0], line.endpoints[1][0]))
-                # print(y <= max(line.endpoints[0][1], line.endpoints[1][1]))
-                # print(y >= min(line.endpoints[0][1], line.endpoints[1][1]))
-                # print("<")
-                if x <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        x >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        y <= max(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                        y >= min(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                        x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        y <= max(line.endpoints[0][1], line.endpoints[1][1]) and \
-                        y >= min(line.endpoints[0][1], line.endpoints[1][1]):
-                    print("_ _ _431")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (x, y), a
-                    results.append((x, y))
-                    indices.append(a)
-                    # print((val[0],val[1],val[2],val[3]))
-            #lines intersect once
-            elif abs(line.coefficient - boundary.coefficient) > 0.00001:
-                # print("_4")
-                # if line.coefficient == math.inf and boundary.coefficient == math.inf:
-                #     print("_ _41")
-                #     return None
-                # elif line.coefficient == math.inf:
-                #     print("_ _42")
-                #     return (line.endpoints[0][0], boundary.coefficient * line.endpoints[0][0] + boundary.intercept)
-                # elif boundary.coefficient == math.inf:
-                #     print("_ _43")
-                #     return (boundary.endpoints[0][0], line.coefficient * boundary.endpoints[0][0] + line.intercept)
-                # else:
-                #     print("_ _44")
-                #     x = (boundary.intercept - line.intercept) / (line.coefficient - boundary.coefficient)
-                #     y = boundary.coefficient * x + boundary.intercept
-                # print("_ _44")
-                x = (boundary.intercept - line.intercept) / (line.coefficient - boundary.coefficient)
-                y = boundary.coefficient * x + boundary.intercept
-                #ensure intersection is within bounds                
-                if x <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        x >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        y <= max(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                        y >= min(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                        x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        y <= max(line.endpoints[0][1], line.endpoints[1][1]) and \
-                        y >= min(line.endpoints[0][1], line.endpoints[1][1]):
-                    print("_ _45")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (x, y), a
-                    results.append((x, y))
-                    indices.append(a)
-                    # print((val[0],val[1],val[2],val[3]))
-            #lines parallel, no intersect
-            # elif abs(boundary.intercept - line.intercept) > 0.00001:
-            #     pass
-            #     print("_5")     
-                # return None, a
-                # print((val[0],val[1],val[2],val[3]))
-            #lines parallel, whole intersect, return smaller (innermost) segment of the two (among the four endpoints)
-            else:
-                # print(abs(boundary.coefficient - line.coefficient))
-                # print("_6")
-                # print(line.coefficient, boundary.coefficient)
-                #if at least one endpoint from line is within segment ends of boundary
-                if (line.endpoints[0][0] <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        line.endpoints[0][0] >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        line.endpoints[0][1] <= max(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                        line.endpoints[0][1] >= min(boundary.endpoints[0][1], boundary.endpoints[1][1])) or \
-                       (line.endpoints[1][0] <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        line.endpoints[1][0] >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        line.endpoints[1][1] <= max(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                        line.endpoints[1][1] >= min(boundary.endpoints[0][1], boundary.endpoints[1][1])):
-                    print("_ _6")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    lis = sortPointsByAxis([line.endpoints[0], line.endpoints[1], boundary.endpoints[0], boundary.endpoints[1]], Physics.AXIS_X)
-                    # return Physics.generateEquation(lis[1], lis[2], plane), a
-
-                    # results.append(Physics.generateEquation(lis[1], lis[2], plane))
-
-                    # order = []
-                    # for p in lis:
-                    #     order.append(lis.index(p))
-
-
-                    # if line.endpoints[1]
-
-                    # returnSeg1 = 
-                    # returnSeg2
-
-                    # yVal1 = 
-                    # #line endpoints are on outside, boundary endpoints on inside
-                    # if (line.endpoints[0] == lis[0] or line.endpoints[0] == lis[3]) and \
-                    #         (line.endpoints[1] == lis[0] or line.endpoints[1] == lis[3]):
-                    #     returnSeg1 = Physics.generateEquation((boundary.endpoints[0][0],line.endpoints[0][1],line.endpoints[0][2]), (boundary.endpoints[1][0],line.endpoints[1][1],line.endpoints[1][2]), plane)
-                    #     returnSeg2 = Physics.generateEquation(boundary.endpoints[0], boundary.endpoints[1],plane)
-                    # #line endpoints are on inside, boundary endpoints on outside 
-                    # elif (line.endpoints[0] == lis[1] or line.endpoints[0] == lis[2]) and \
-                    #         (line.endpoints[1] == lis[1] or line.endpoints[1] == lis[2]):
-                    #     returnSeg1 = Physics.generateEquation(line.endpoints[0], line.endpoints[1],plane)
-                    #     returnSeg2 = Physics.generateEquation((line.endpoints[0][0],boundary.endpoints[0][1],boundary.endpoints[0][2]), (line.endpoints[1][0],boundary.endpoints[1][1],boundary.endpoints[1][2]), plane)
-                    # #line endpoints are on left and mid-right side, boundary endpoints are on mid-left and right side
-                    # elif (line.endpoints[0] == lis[0] or line.endpoints[0] == lis[2]) and \
-                    #         (line.endpoints[1] == lis[0] or line.endpoints[1] == lis[2]):
-                    #     if line.endpoints[0] == lis[0]:
-                    #         returnSeg1 = Physics.generateEquation((boundary.endpoints[0][0],yVal1,zVal1), line.endpoints[1], plane)
-                    #         if boundary.endpoints[0] == lis[1]:
-                    #             returnSeg2 = Physics.generateEquation(boundary.endpoints[0], (line.endpoints[1][0],boundary.endpoints[1][1],boundary.endpoints[1][2]), plane)
-                    #         else:
-
-                    # #line endpoints are on mid-left and right side, boundary endpoints are on left and mid-right side
-                    # elif (line.endpoints[0] == lis[1] or line.endpoints[0] == lis[3]) and \
-                    #         (line.endpoints[1] == lis[1] or line.endpoints[1] == lis[3]):
-
-                    #line & boundary equations in XZ plane
-                    l2 = Physics.generateEquation(line.endpoints[0],line.endpoints[1], Physics.PLANE_XZ)
-                    b2 = Physics.generateEquation(boundary.endpoints[0],boundary.endpoints[1], Physics.PLANE_XZ)
-
-                    #calculate innermost two points using the inner x bounds
-                    lineY1 = line.evaluate(x=lis[1][0])
-                    lineZ1 = l2.evaluate(x=lis[1][0])
-                    lineY2 = line.evaluate(x=lis[2][0])
-                    lineZ2 = l2.evaluate(x=lis[2][0])
-                    boundaryY1 = boundary.evaluate(x=lis[1][0])
-                    boundaryZ1 = b2.evaluate(x=lis[1][0])
-                    boundaryY2 = boundary.evaluate(x=lis[2][0])
-                    boundaryZ2 = b2.evaluate(x=lis[2][0])
-                    returnSeg1 = Physics.generateEquation((lis[1][0],lineY1,lineZ1), (lis[2][0],lineY2,lineZ2), Physics.PLANE_XZ)
-                    returnSeg2 = Physics.generateEquation((lis[1][0],boundaryY1,boundaryZ1), (lis[2][0],boundaryY2,boundaryZ2), Physics.PLANE_XZ)
-                    results.append([returnSeg1,returnSeg2])
-
-                    print("**")
-                    print(l2.endpoints, l2.coefficient, l2.intercept)
-                    print(b2.endpoints, b2.coefficient, b2.intercept)
-                    print(returnSeg1.endpoints)
-                    print(returnSeg2.endpoints)
-                    # print(id(returnSeg1), repr(returnSeg1))
-                    # print(id(returnSeg2), repr(returnSeg2))
-                    print("**")
-
-                    indices.append(a)
-                    # print((val[0],val[1],val[2],val[3]))
-                #boundary sections
-                else:
-                    input("_6.5")
-                    if boundary.evaluate(x=line.endpoints[0][0], y=line.endpoints[0][1]) or \
-                            boundary.evaluate(x=line.endpoints[1][0], y=line.endpoints[1][1]):
-                        x = (boundary.intercept - line.intercept) / (line.coefficient - boundary.coefficient)
-                        y = boundary.coefficient * x + boundary.intercept
-                        #ensure intersection is within bounds                
-                        if x <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                                x >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                                y <= max(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                                y >= min(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                                x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                                x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                                y <= max(line.endpoints[0][1], line.endpoints[1][1]) and \
-                                y >= min(line.endpoints[0][1], line.endpoints[1][1]):
-                            results.append([(x,y), True])
-
-            # print("--")
-    elif plane == Physics.PLANE_XZ:
-        for a,boundary in enumerate(boundaries):
-            if boundary.plane != Physics.PLANE_XZ:
-                boundary = Physics.generateEquation(boundary.endpoints[0], boundary.endpoints[1], Physics.PLANE_XZ)
-            # print(f", {a}")
-            # print("XZ")
-            # print(line.endpoints)
-            # print(boundary.endpoints)
-            val[3]=a
-            #one intersection - both lines are only points
-            if line.coefficient == None and boundary.coefficient == None:
-                # print("_7")
-                if abs(line.endpoints[0][0]-boundary.endpoints[0][0]) <= 0.00001 and \
-                        abs(line.endpoints[0][2]-boundary.endpoints[0][2]) <= 0.00001:
-                    # print("_ _7")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (line.endpoints[0][0], line.endpoints[0][2]), a
-                    results.append((line.endpoints[0][0], line.endpoints[0][2]))
-                    indices.append(a)
-            #one intersection - one line is a point, other is line
-            elif line.coefficient == None:
-                # print("_8")
-                x1 = line.endpoints[0][0]
-                z2 = boundary.coefficient
-                z2 = boundary.evaluate(x=x1)
-                if abs(line.endpoints[0][2]-z2) <= 0.00001 and \
-                        x1 <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        x1 >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        z2 <= max(boundary.endpoints[0][2], boundary.endpoints[1][2]) and \
-                        z2 >= min(boundary.endpoints[0][2], boundary.endpoints[1][2]):
-                    # print("_ _8")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (line.endpoints[0][0], line.endpoints[0][2]), a
-                    results.append((line.endpoints[0][0], line.endpoints[0][2]))
-                    indices.append(a)
-            #one intersection - one line is line, other line is a point
-            elif boundary.coefficient == None:
-                # print("_9")
-                x1 = boundary.endpoints[0][0]
-                z2 = line.evaluate(x=x1)
-                if abs(boundary.endpoints[0][2]-z2) <= 0.00001 and \
-                        x1 <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        x1 >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        z2 <= max(line.endpoints[0][2], line.endpoints[1][2]) and \
-                        z2 >= min(line.endpoints[0][2], line.endpoints[1][2]):
-                    # print("_ _9")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (boundary.endpoints[0][0], boundary.endpoints[0][2]), a
-                    results.append((boundary.endpoints[0][0], boundary.endpoints[0][2]))
-                    indices.append(a)
-            #lines parallel vertical
-            elif line.coefficient == math.inf and boundary.coefficient == math.inf: 
-                # print("_ _101")
-                if abs(line.endpoints[0][0] - boundary.endpoints[0][0]) <= 0.00001:
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    lis = sortPointsByAxis([line.endpoints[0], line.endpoints[1], boundary.endpoints[0], boundary.endpoints[1]], Physics.AXIS_Y)
-                    # return Physics.generateEquation(lis[1], lis[2], plane), a
-
-                    # results.append(Physics.generateEquation(lis[1], lis[2], plane))
-                    
-                    #line & boundary equations in XZ plane
-                    l2 = Physics.generateEquation(line.endpoints[0],line.endpoints[1], Physics.PLANE_XZ)
-                    b2 = Physics.generateEquation(boundary.endpoints[0],boundary.endpoints[1], Physics.PLANE_XZ)
-
-                    #calculate innermost two points using the inner x bounds
-                    lineZ1 = l2.evaluate(x=lis[1][0])
-                    lineZ2 = b2.evaluate(x=lis[1][0])
-                    boundaryZ1 = l2.evaluate(x=lis[2][0])
-                    boundaryZ2 = b2.evaluate(x=lis[2][0])
-                    returnSeg1 = Physics.generateEquation((line.endpoints[0][0],lis[1][1],lineZ1), (line.endpoints[0][0],lis[2][1],lineZ2), Physics.PLANE_XZ)
-                    returnSeg2 = Physics.generateEquation((line.endpoints[0][0],lis[1][1],boundaryZ1), (line.endpoints[0][0],lis[2][1],boundaryZ2), Physics.PLANE_XZ)
-                    results.append([returnSeg1,returnSeg2])
-                    indices.append(a)
-            #one intersection - vertical line and regular line 
-            elif line.coefficient == math.inf:
-                # print("_ _102")
-                x = line.endpoints[0][0]
-                z = boundary.coefficient * x + boundary.intercept
-                if x <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        x >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        z <= max(boundary.endpoints[0][2], boundary.endpoints[1][2]) and \
-                        z >= min(boundary.endpoints[0][2], boundary.endpoints[1][2]) and \
-                        x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        z <= max(line.endpoints[0][2], line.endpoints[1][2]) and \
-                        z >= min(line.endpoints[0][2], line.endpoints[1][2]):
-                    # print("_ _ _1021")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (x, z), a
-                    results.append((x, z))
-                    indices.append(a)
-            #one intersection - regular line and vertical line
-            elif boundary.coefficient == math.inf:
-                # print("_ _103")
-                x = boundary.endpoints[0][0]
-                z = line.coefficient * x + line.intercept
-                if x <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        x >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        z <= max(boundary.endpoints[0][2], boundary.endpoints[1][2]) and \
-                        z >= min(boundary.endpoints[0][2], boundary.endpoints[1][2]) and \
-                        x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        z <= max(line.endpoints[0][2], line.endpoints[1][2]) and \
-                        z >= min(line.endpoints[0][2], line.endpoints[1][2]):
-                    # print("_ _ _1031")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (x, z), a
-                    results.append((x, z))
-                    indices.append(a)
-            #lines intersect once
-            elif abs(line.coefficient - boundary.coefficient) > 0.00001:
-                # print("_10")
-                # if line.coefficient == math.inf and boundary.coefficient == math.inf:
-                #     print("_ _101")
-                #     return None
-                # elif line.coefficient == math.inf:
-                #     print("_ _102")
-                #     return (line.endpoints[0][0], boundary.coefficient * line.endpoints[0][0] + boundary.intercept)
-                # elif boundary.coefficient == math.inf:
-                #     print("_ _103")
-                #     return (boundary.endpoints[0][0], line.coefficient * boundary.endpoints[0][0] + line.intercept)
-                # else:
-                # print("_ _104")
-                x = (boundary.intercept - line.intercept) / (line.coefficient - boundary.coefficient)
-                z = boundary.coefficient * x + boundary.intercept
-                #ensure intersection is within bounds
-                if x <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        x >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        z <= max(boundary.endpoints[0][2], boundary.endpoints[1][2]) and \
-                        z >= min(boundary.endpoints[0][2], boundary.endpoints[1][2]) and \
-                        x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                        z <= max(line.endpoints[0][2], line.endpoints[1][2]) and \
-                        z >= min(line.endpoints[0][2], line.endpoints[1][2]):
-                    # print("_ _105")
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    # return (x, z), a
-                    results.append((x, z))
-                    indices.append(a)
-            #lines parallel, no intersect
-            elif abs(boundary.intercept - line.intercept) > 0.00001:
-                pass
-                # print("_11")
-                # return None, a
-            #lines parallel, whole intersect, return smaller (innermost) segment of the two (among the four endpoints)
-            else:
-                # print("_12")
-                if (line.endpoints[0][0] <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        line.endpoints[0][0] >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        line.endpoints[0][2] <= max(boundary.endpoints[0][2], boundary.endpoints[1][2]) and \
-                        line.endpoints[0][2] >= min(boundary.endpoints[0][2], boundary.endpoints[1][2])) or \
-                       (line.endpoints[1][0] <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        line.endpoints[1][0] >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                        line.endpoints[1][2] <= max(boundary.endpoints[0][2], boundary.endpoints[1][2]) and \
-                        line.endpoints[1][2] >= min(boundary.endpoints[0][2], boundary.endpoints[1][2])):
-                    allHits.append((val[0],val[1],val[2],val[3]))
-                    lis = sortPointsByAxis([line.endpoints[0], line.endpoints[1], boundary.endpoints[0], boundary.endpoints[1]], Physics.AXIS_X)
-                    # return Physics.generateEquation(lis[1], lis[2], plane), a
-
-                    # results.append(Physics.generateEquation(lis[1], lis[2], plane))
-
-                    #line & boundary equations in XY plane
-                    l2 = Physics.generateEquation(line.endpoints[0],line.endpoints[1], Physics.PLANE_XY)
-                    b2 = Physics.generateEquation(boundary.endpoints[0],boundary.endpoints[1], Physics.PLANE_XY)
-
-                    #calculate innermost two points using the inner x bounds
-                    lineY1 = l2.evaluate(x=lis[1][0])
-                    lineZ1 = line.evaluate(x=lis[1][0])
-                    lineY2 = l2.evaluate(x=lis[2][0])
-                    lineZ2 = line.evaluate(x=lis[2][0])
-                    boundaryY1 = b2.evaluate(x=lis[1][0])
-                    boundaryZ1 = boundary.evaluate(x=lis[1][0])
-                    boundaryY2 = b2.evaluate(x=lis[2][0])
-                    boundaryZ2 = boundary.evaluate(x=lis[2][0])
-                    returnSeg1 = Physics.generateEquation((lis[1][0],lineY1,lineZ1), (lis[2][0],lineY2,lineZ2), Physics.PLANE_XZ)
-                    returnSeg2 = Physics.generateEquation((lis[1][0],boundaryY1,boundaryZ1), (lis[2][0],boundaryY2,boundaryZ2), Physics.PLANE_XZ)
-                    results.append([returnSeg1,returnSeg2])
-                    indices.append(a)
-                else:
-                    if boundary.evaluate(x=line.endpoints[0][0], y=line.endpoints[0][1]) or \
-                            boundary.evaluate(x=line.endpoints[1][0], y=line.endpoints[1][1]):
-                        x = (boundary.intercept - line.intercept) / (line.coefficient - boundary.coefficient)
-                        y = boundary.coefficient * x + boundary.intercept
-                        #ensure intersection is within bounds                
-                        if x <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                                x >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                                y <= max(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                                y >= min(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                                x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                                x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                                y <= max(line.endpoints[0][1], line.endpoints[1][1]) and \
-                                y >= min(line.endpoints[0][1], line.endpoints[1][1]):
-                            results.append([(x,y), True])
-    elif plane == Physics.PLANE_YZ:
-        if boundary.evaluate(x=line.endpoints[0][0], y=line.endpoints[0][1]) or \
-                boundary.evaluate(x=line.endpoints[1][0], y=line.endpoints[1][1]):
-            x = (boundary.intercept - line.intercept) / (line.coefficient - boundary.coefficient)
-            y = boundary.coefficient * x + boundary.intercept
-            #ensure intersection is within bounds                
-            if x <= max(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                    x >= min(boundary.endpoints[0][0], boundary.endpoints[1][0]) and \
-                    y <= max(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                    y >= min(boundary.endpoints[0][1], boundary.endpoints[1][1]) and \
-                    x <= max(line.endpoints[0][0], line.endpoints[1][0]) and \
-                    x >= min(line.endpoints[0][0], line.endpoints[1][0]) and \
-                    y <= max(line.endpoints[0][1], line.endpoints[1][1]) and \
-                    y >= min(line.endpoints[0][1], line.endpoints[1][1]):
-                results.append([(x,y), True])
-            # print("---")
-    if len(results) != 0:
-        return results, indices
-    return None, None
-
 
 #returns list with items ordered ascending
 def insertionSort(arr):
@@ -873,8 +434,9 @@ class Rigidbody:
                  velocity=Vector3(0, 0, 0),
                  acceleration=Vector3(0, 0, 0),
                  mass=1,
-                 airResistance=0,
-                 gravity=0):
+                 airResistance=0.01,
+                 gravity=1,
+                 elasticity=0.8):
         self.parent = parent
         if position is None:
             self.position = Vector3(parent.position)
@@ -882,9 +444,12 @@ class Rigidbody:
             self.position = Vector3(position)
         self.velocity = velocity
         self.acceleration = acceleration
+        self.rotationVelocity = Vector3(0, 0, 0)
         self.facesVerticesPos = parent.getFaceVerticesRelPos()
+        self.uniqueLines = []
+        self.faces = []
         self.boundaryEquations = []
-        for face in parent.getFaceVerticesPos():
+        for face in parent.triangulate(parent.getFaceVerticesPos()):
             averagePoint = [0, 0 ,0]
             for point in face:
                 averagePoint[0] += point[0]
@@ -893,8 +458,12 @@ class Rigidbody:
             averagePoint[0] /= len(face)
             averagePoint[1] /= len(face)
             averagePoint[2] /= len(face)
-            self.boundaryEquations.append(generateFaceBoundaryEquations(
-                            face, averagePoint, Physics.PLANE_XY))
+            newBoundary = generateFaceBoundaryEquations(face, averagePoint, Physics.PLANE_XY)
+            self.faces.append(Face(face, averagePoint=averagePoint))
+            self.boundaryEquations.append(newBoundary)
+            for line in newBoundary:
+                if line not in self.uniqueLines:
+                    self.uniqueLines.append(line)
         vectsFromCenter = [Vector3(point) for face in self.facesVerticesPos for point in face]
         distsFromCenter = [math.sqrt(vect[0]**2+vect[1]**2+vect[2]**2) for vect in vectsFromCenter]
         distsFromCenter = insertionSort(distsFromCenter)
@@ -906,6 +475,7 @@ class Rigidbody:
         self.gravity = gravity
         self.airResistance = airResistance
         self.mass = mass
+        self.elasticity = elasticity
 
     def resetBoundaries(self):
         self.boundaryEquations = []
@@ -925,6 +495,37 @@ class Rigidbody:
     def distanceFrom(body):
         distVect = self.position - body.position
         return math.sqrt(math.sqrt(distVect[0]**2 + distVect[1]**2) + distVect[2]**2)
+
+class Face:
+    def __init__(self, points, averagePoint=None):
+        self.points = points
+        if averagePoint != None:
+            self.averagePoint = averagePoint
+        else:
+            self.averagePoint = [0, 0 ,0]
+            for point in points:
+                averagePoint[0] += point[0]
+                averagePoint[1] += point[1]
+                averagePoint[2] += point[2]
+            self.averagePoint[0] /= 3
+            self.averagePoint[1] /= 3
+            self.averagePoint[2] /= 3
+        self.maxDistance =  max(math.sqrt((points[0][0]-averagePoint[0])**2+(points[0][1]-averagePoint[1])**2+(points[0][2]-averagePoint[2])**2),\
+                                math.sqrt((points[1][0]-averagePoint[0])**2+(points[1][1]-averagePoint[1])**2+(points[1][2]-averagePoint[2])**2),\
+                                math.sqrt((points[2][0]-averagePoint[0])**2+(points[2][1]-averagePoint[1])**2+(points[2][2]-averagePoint[2])**2))
+
+    def __eq__(self, other):
+        for point in other.points:
+            if point not in points:
+                return False
+        return True
+
+    def __getitem__(self, key):
+        return self.points[key]
+
+    def __str__(self):
+        return str(self.points)
+
 
 class Collision:
     def __init__(self, body1, body2, collisionPoints):
